@@ -1,0 +1,31 @@
+# Python
+backend/venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+dist/
+*.dist-info/
+
+# Kaggle / datasets
+~/.kaggle/
+backend/data/
+
+# Models (large binary — keep combined.pth if you want to commit it)
+# models/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Env / secrets
+.env
+*.env.local
+
+# macOS
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
