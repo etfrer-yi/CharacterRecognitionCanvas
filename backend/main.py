@@ -37,14 +37,25 @@ def startup():
 
 
 def preprocess(img: Image.Image) -> torch.Tensor:
-    arr = np.array(img.convert("L").resize((INPUT_SIZE, INPUT_SIZE), Image.LANCZOS), dtype=np.float32)
+    arr = np.array(img.convert("L"), dtype=np.float32)
+    if arr.mean() > 127:
+        arr = 255.0 - arr
     lo, hi = arr.min(), arr.max()
     if hi > lo:
         arr = (arr - lo) / (hi - lo) * 255.0
-    if arr.mean() > 127:
-        arr = 255.0 - arr
+    arr = np.where(arr > 10, 255.0, 0.0)
+    rows, cols = np.where(arr > 0)
+    if rows.size:
+        arr = arr[rows.min():rows.max()+1, cols.min():cols.max()+1]
+    h, w = arr.shape
+    side = max(h, w)
+    pad = int(side * 0.05)
+    canvas = np.zeros((side + 2*pad, side + 2*pad), dtype=np.float32)
+    canvas[pad + (side-h)//2 : pad + (side-h)//2 + h,
+           pad + (side-w)//2 : pad + (side-w)//2 + w] = arr
+    out = Image.fromarray(canvas.astype(np.uint8)).resize((INPUT_SIZE, INPUT_SIZE), Image.LANCZOS)
     tf = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
-    return tf(Image.fromarray(arr.astype(np.uint8))).unsqueeze(0).to(DEVICE)
+    return tf(out).unsqueeze(0).to(DEVICE)
 
 
 @app.post("/predict")

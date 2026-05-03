@@ -35,22 +35,71 @@ LABELS = (
 _norm = transforms.Normalize((0.5,), (0.5,))
 
 
-def standardize(img: Image.Image) -> Image.Image:
-    arr = np.array(img.convert("L").resize((INPUT_SIZE, INPUT_SIZE), Image.LANCZOS), dtype=np.float32)
+def normalize_to_canvas(img: Image.Image, random_pad: bool = False) -> Image.Image:
+    """
+    Universal preprocessing:
+      1. Grayscale + white-on-black.
+      2. Binary threshold: pixel > 20 → 255.
+      3. Tight-crop to stroke bounding box.
+      4. Pad to square:
+           random_pad=False: fixed 5% on all sides (canonical / inference).
+           random_pad=True:  independent uniform [0, 0.4] per side (augmentation).
+      5. Resize to INPUT_SIZE × INPUT_SIZE.
+    """
+    arr = np.array(img.convert("L"), dtype=np.float32)
+    if arr.mean() > 127:
+        arr = 255.0 - arr
     lo, hi = arr.min(), arr.max()
     if hi > lo:
         arr = (arr - lo) / (hi - lo) * 255.0
-    if arr.mean() > 127:
-        arr = 255.0 - arr
-    return Image.fromarray(arr.astype(np.uint8))
+    arr = np.where(arr > 20, 255.0, 0.0)
+    # remove small isolated noise blobs (connected components smaller than min_size)
+    from collections import deque
+    b = arr > 0
+    visited = np.zeros_like(b)
+    keep = np.zeros_like(b)
+    min_size = max(3, int(b.sum() * 0.01))  # at least 1% of foreground pixels
+    for sy, sx in zip(*np.where(b & ~visited)):
+        queue, pixels = deque([(sy, sx)]), []
+        visited[sy, sx] = True
+        while queue:
+            y, x = queue.popleft()
+            pixels.append((y, x))
+            for ny, nx in ((y-1,x),(y+1,x),(y,x-1),(y,x+1)):
+                if 0<=ny<b.shape[0] and 0<=nx<b.shape[1] and b[ny,nx] and not visited[ny,nx]:
+                    visited[ny,nx] = True
+                    queue.append((ny, nx))
+        if len(pixels) >= min_size:
+            for y, x in pixels:
+                keep[y, x] = True
+    arr = np.where(keep, 255.0, 0.0)
+    rows, cols = np.where(arr > 0)
+    if rows.size:
+        arr = arr[rows.min():rows.max()+1, cols.min():cols.max()+1]
+    h, w = arr.shape
+    side = max(h, w)
+    if random_pad:
+        pt, pb, pl, pr = (np.random.uniform(0.0, 0.4) for _ in range(4))
+    else:
+        pt = pb = pl = pr = 0.05
+    top, bottom, left, right = int(side*pt), int(side*pb), int(side*pl), int(side*pr)
+    canvas = np.zeros((side + top + bottom, side + left + right), dtype=np.float32)
+    canvas[top + (side-h)//2 : top + (side-h)//2 + h,
+           left + (side-w)//2 : left + (side-w)//2 + w] = arr
+    return Image.fromarray(canvas.astype(np.uint8)).resize((INPUT_SIZE, INPUT_SIZE), Image.LANCZOS)
 
 
-TF_CLEAN = transforms.Compose([transforms.Lambda(standardize), transforms.ToTensor(), _norm])
-TF_AUG   = transforms.Compose([
-    transforms.Lambda(standardize),
-    transforms.RandomApply([transforms.RandomResizedCrop(INPUT_SIZE, scale=(0.7, 1.0), ratio=(0.9, 1.1))], p=0.6),
-    transforms.RandomAffine(degrees=12, translate=(0.12, 0.12), scale=(0.85, 1.15), shear=5, fill=0),
-    transforms.ToTensor(), _norm,
+TF_CLEAN = transforms.Compose([
+    transforms.Lambda(lambda img: normalize_to_canvas(img, random_pad=True)),
+    transforms.ToTensor(),
+    _norm,
+])
+
+TF_AUG = transforms.Compose([
+    transforms.Lambda(lambda img: normalize_to_canvas(img, random_pad=True)),
+    transforms.RandomAffine(degrees=15, translate=(0.1, 0.1), shear=8, fill=0),
+    transforms.ToTensor(),
+    _norm,
 ])
 
 
@@ -68,7 +117,7 @@ def _read_idx(path):
         return np.frombuffer(f.read(), dtype=np.uint8).reshape(dims)
 
 
-class MNISTKaggle(Dataset):
+class MNIST(Dataset):
     """
     Reads MNIST from hojjatk/mnist-dataset.
     Files: train-images.idx3-ubyte, train-labels.idx1-ubyte,
@@ -105,7 +154,8 @@ class ChineseMNIST(Dataset):
 
     def __getitem__(self, idx):
         path, label = self.samples[idx]
-        return self.transform(Image.open(path)) if self.transform else Image.open(path), label
+        img = Image.open(path)
+        return self.transform(img) if self.transform else img, label
 
 
 class KuzushijiMNIST(Dataset):
@@ -133,10 +183,10 @@ def train(epochs: int = 8, batch_size: int = 128):
     kmnist_root  = kagglehub.dataset_download("anokas/kuzushiji")
 
     # MNIST
-    mnist_tr_c = MNISTKaggle(mnist_root, train=True,  transform=TF_CLEAN)
-    mnist_tr_a = MNISTKaggle(mnist_root, train=True,  transform=TF_AUG)
-    mnist_va_c = MNISTKaggle(mnist_root, train=False, transform=TF_CLEAN)
-    mnist_va_a = MNISTKaggle(mnist_root, train=False, transform=TF_AUG)
+    mnist_tr_c = MNIST(mnist_root, train=True,  transform=TF_CLEAN)
+    mnist_tr_a = MNIST(mnist_root, train=True,  transform=TF_AUG)
+    mnist_va_c = MNIST(mnist_root, train=False, transform=TF_CLEAN)
+    mnist_va_a = MNIST(mnist_root, train=False, transform=TF_AUG)
 
     # Chinese MNIST (90/10 split)
     ch_c  = ChineseMNIST(chinese_root, label_offset=10, transform=TF_CLEAN)

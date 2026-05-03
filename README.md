@@ -16,22 +16,82 @@ A single CNN is trained jointly on all three datasets and outputs a probability 
 
 **Model** (`backend/model.py`): two conv+pool blocks → 256-unit FC → 35-class output. Input is 32×32 grayscale.
 
-**Preprocessing** (applied identically at train and inference time):
-1. Convert to grayscale, resize to 32×32
-2. Stretch contrast to full 0–255 range (handles faint strokes in Chinese MNIST)
-3. Invert if background is white (normalise to white-on-black)
-4. Normalise to [-1, 1]
+## The bounding box problem
+
+### Problem
+
+After the initial version was working, a usability issue emerged: Chinese characters had to be drawn noticeably smaller than Western digits or Japanese hiragana to be recognised correctly. Drawing 三 at full canvas size would fail; drawing it small and centred would succeed.
+
+### Diagnosis
+
+Inspecting the raw training images revealed the root cause — each dataset has a very different natural bounding box fill ratio:
+
+| Dataset | Mean bbox fill (raw) |
+|---|---|
+| Chinese MNIST | ~12% |
+| MNIST digits | ~37% |
+| Kuzushiji hiragana | ~70% |
+
+Chinese MNIST images are 64×64 but the character strokes occupy only a small central region, surrounded by black padding. MNIST digits and Kuzushiji are tightly cropped to their strokes. The model therefore learned that "Chinese character" means a small mark in a large black field. When a user drew a Chinese character filling the canvas, the model had never seen that distribution.
+
+### Brainstorming
+
+Two approaches were considered:
+
+**Option A — Script-aware routing:** detect which writing system is being drawn and apply different scaling at inference. Rejected: requires knowing the script before recognition, which is circular.
+
+**Option B — Normalise training data to a canonical scale, then augment widely:** tight-crop every training image to its stroke bounding box, pad uniformly, and use wide-range scale augmentation so the model sees every character at every possible fill ratio. This makes the pipeline dataset-agnostic — any new dataset, regardless of its natural padding, gets normalised to the same starting point.
+
+### Solution
+
+`normalize_to_canvas` (applied identically at train and inference time):
+1. Convert to grayscale; invert if background is white (normalise to white-on-black)
+2. Stretch contrast to full 0–255 range
+3. Tight-crop to the stroke bounding box
+4. Pad to a square with a 15% margin on each side, centred
+5. Resize to 32×32 and normalise to [-1, 1]
+
+After this step every character occupies ~49% of the frame regardless of source dataset.
+
+`TF_AUG` then applies `RandomResizedCrop(32, scale=(0.4, 1.0))` on top, so the model trains on characters at 40%–100% fill. This directly covers the range from a small careful drawing to a large stroke filling the whole canvas.
 
 **Training data** (`backend/train.py`):
 - MNIST (60k train / 10k val) — downloaded automatically via Kaggle ([hojjatk/mnist-dataset](https://www.kaggle.com/datasets/hojjatk/mnist-dataset))
 - Chinese MNIST (15k images, 90/10 split) — downloaded automatically via Kaggle ([gpreda/chinese-mnist](https://www.kaggle.com/datasets/gpreda/chinese-mnist))
 - Kuzushiji-MNIST (60k train / 10k val) — downloaded automatically via Kaggle ([anokas/kuzushiji](https://www.kaggle.com/datasets/anokas/kuzushiji))
 
-Each split is augmented: all originals are kept, plus 50% extra copies with random crop, affine transforms (±12° rotation, ±12% translation, 85–115% scale, ±5° shear). Augmentation is applied to training and validation sets.
+Each split uses all originals (`TF_CLEAN`) plus 50% extra augmented copies (`TF_AUG`, with `RandomResizedCrop` + `RandomAffine`).
 
 **Backend** (`backend/main.py`): FastAPI server with a single `POST /predict` endpoint.
 
 **Frontend** (`frontend/src/`): React + Vite. 280×280 canvas with thick white strokes on black background (matching training convention). Collapsible sidebar lists all 35 characters with descriptions.
+
+## Extending to new datasets
+
+The pipeline is dataset-agnostic. To add a new character set:
+
+1. Write a `Dataset` subclass that yields `(PIL.Image, label)` pairs — no preprocessing needed in the class itself
+2. Pass it `TF_CLEAN` and `TF_AUG`; `normalize_to_canvas` handles all bounding box and polarity differences automatically
+3. Add it to the `ConcatDataset` in `train()` with the appropriate label offset
+4. Update `LABELS` in both `train.py` and `main.py`
+
+The only assumption is that source images contain a single character per image.
+
+## Preprocessing samples
+
+`visualize_preprocessing.py` generates side-by-side original vs preprocessed grids for all three datasets into `preprocessing_samples/`:
+
+| File | Contents |
+|---|---|
+| `grid_western.png` | MNIST digits 0–9 |
+| `grid_chinese.png` | Chinese numerals 零–亿 |
+| `grid_japanese.png` | Kuzushiji hiragana お き す つ な は ま や れ を |
+
+```bash
+python visualize_preprocessing.py
+```
+
+Requires the Kaggle datasets to be cached locally (run `train.py` first, or download manually).
 
 ## Project structure
 
@@ -48,6 +108,11 @@ CharacterRecognitionCanvas/
 │       └── Sidebar.jsx   # Character reference sidebar
 ├── models/
 │   └── combined.pth      # Trained model (35 classes)
+├── preprocessing_samples/
+│   ├── grid_western.png
+│   ├── grid_chinese.png
+│   └── grid_japanese.png
+├── visualize_preprocessing.py
 └── .gitignore
 ```
 
@@ -69,6 +134,16 @@ cd frontend
 npm install
 ```
 
+### Kaggle
+Ensure you have
+```
+{
+  "username": "your_kaggle_username",
+  "key": "your_kaggle_api_key"
+}
+```
+in `~/.kaggle/kaggle.json` for pulling down the data
+
 ## Datasets
 
 All three datasets are downloaded automatically by `train.py` via [kagglehub](https://github.com/Kaggle/kagglehub):
@@ -89,7 +164,7 @@ All three datasets are downloaded automatically by `train.py` via [kagglehub](ht
 ```bash
 cd backend
 source venv/bin/activate
-python train.py           # default: 15 epochs, batch size 128
+python train.py           # default: 8 epochs, batch size 128
 python train.py --epochs 20 --batch_size 64
 ```
 
