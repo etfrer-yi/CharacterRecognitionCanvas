@@ -47,20 +47,22 @@ Two approaches were considered:
 `normalize_to_canvas` (applied identically at train and inference time):
 1. Convert to grayscale; invert if background is white (normalise to white-on-black)
 2. Stretch contrast to full 0–255 range
-3. Tight-crop to the stroke bounding box
-4. Pad to a square with a 15% margin on each side, centred
-5. Resize to 32×32 and normalise to [-1, 1]
+3. Binary threshold: pixel > 20 → 255, else 0
+4. Remove noise: drop connected components smaller than 1% of total foreground pixels
+5. Tight-crop to the stroke bounding box
+6. Pad to a square:
+   - canonical / inference (`random_pad=False`): fixed 5% margin on all sides
+   - augmentation (`random_pad=True`): independent uniform [0%, 40%] per side
+7. Resize to 32×32
 
-After this step every character occupies ~49% of the frame regardless of source dataset.
-
-`TF_AUG` then applies `RandomResizedCrop(32, scale=(0.4, 1.0))` on top, so the model trains on characters at 40%–100% fill. This directly covers the range from a small careful drawing to a large stroke filling the whole canvas.
+`TF_AUG` additionally applies `RandomAffine(degrees=15, translate=(0.1, 0.1), shear=8)` on top of the random-pad normalisation, so the model trains on characters at a wide range of sizes, positions, and orientations. This directly covers the range from a small careful drawing to a large stroke filling the whole canvas.
 
 **Training data** (`backend/train.py`):
 - MNIST (60k train / 10k val) — downloaded automatically via Kaggle ([hojjatk/mnist-dataset](https://www.kaggle.com/datasets/hojjatk/mnist-dataset))
 - Chinese MNIST (15k images, 90/10 split) — downloaded automatically via Kaggle ([gpreda/chinese-mnist](https://www.kaggle.com/datasets/gpreda/chinese-mnist))
 - Kuzushiji-MNIST (60k train / 10k val) — downloaded automatically via Kaggle ([anokas/kuzushiji](https://www.kaggle.com/datasets/anokas/kuzushiji))
 
-Each split uses all originals (`TF_CLEAN`) plus 50% extra augmented copies (`TF_AUG`, with `RandomResizedCrop` + `RandomAffine`).
+Each split uses all originals (`TF_CLEAN`) plus 50% extra augmented copies (`TF_AUG`, with random-pad normalisation + `RandomAffine`).
 
 **Backend** (`backend/main.py`): FastAPI server with a single `POST /predict` endpoint.
 
