@@ -1,8 +1,8 @@
 """
-Saves a grid of original vs preprocessed samples for all three datasets.
+Saves a grid of original vs preprocessed samples for all datasets.
 Run from the project root: python visualize_preprocessing.py
 """
-import os, sys, struct
+import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "backend"))
 
 import numpy as np
@@ -10,31 +10,40 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from PIL import Image
-from train import normalize_to_canvas, _read_idx
+from train import normalize_to_canvas, _EMNIST_LABELS, CHINESE_LABELS, KMNIST_LABELS
 
-_KAGGLE_CACHE = os.environ.get("KAGGLEHUB_CACHE") or os.path.expanduser("~/.cache/kagglehub")
-MNIST_ROOT   = os.path.join(_KAGGLE_CACHE, "datasets/hojjatk/mnist-dataset/versions/1")
-CHINESE_ROOT = os.path.join(_KAGGLE_CACHE, "datasets/gpreda/chinese-mnist/versions/7/data/data")
-KMNIST_ROOT  = os.path.join(_KAGGLE_CACHE, "datasets/anokas/kuzushiji/versions/3")
+_KAGGLE_CACHE = os.environ.get("KAGGLEHUB_CACHE") or os.path.expanduser("~/.cache/kagglehub/datasets")
 
-CHINESE_LABELS = ["零","一","二","三","四","五","六","七","八","九","十","百","千","万","亿"]
-KMNIST_LABELS  = ["お","き","す","つ","な","は","ま","や","れ","を"]
+def _latest(base, *parts):
+    path = os.path.join(base, *parts, "versions")
+    if os.path.isdir(path):
+        versions = sorted(d for d in os.listdir(path) if d.isdigit())
+        if versions:
+            return os.path.join(path, versions[-1])
+    return os.path.join(base, *parts)
+
+EMNIST_ROOT  = _latest(_KAGGLE_CACHE, "crawford/emnist")
+CHINESE_ROOT = os.path.join(_latest(_KAGGLE_CACHE, "gpreda/chinese-mnist"), "data", "data")
+KMNIST_ROOT  = _latest(_KAGGLE_CACHE, "anokas/kuzushiji")
 
 OUT_DIR = os.path.join(os.path.dirname(__file__), "preprocessing_samples")
 os.makedirs(OUT_DIR, exist_ok=True)
 
 
-def get_mnist_samples():
-    imgs   = _read_idx(os.path.join(MNIST_ROOT, "train-images.idx3-ubyte"))
-    labels = _read_idx(os.path.join(MNIST_ROOT, "train-labels.idx1-ubyte"))
+def get_emnist_samples():
+    csv_path = os.path.join(EMNIST_ROOT, "emnist-balanced-train.csv")
+    data   = np.loadtxt(csv_path, delimiter=",", dtype=np.uint8)
+    labels = data[:, 0]
+    imgs   = data[:, 1:].reshape(-1, 28, 28).transpose(0, 2, 1)
     seen, samples = set(), []
     for img, lbl in zip(imgs, labels):
+        lbl = int(lbl)
         if lbl not in seen:
             seen.add(lbl)
-            samples.append((str(lbl), Image.fromarray(img)))
-        if len(seen) == 10:
+            samples.append((_EMNIST_LABELS[lbl], Image.fromarray(img)))
+        if len(seen) == 47:
             break
-    return sorted(samples, key=lambda x: int(x[0]))
+    return sorted(samples, key=lambda x: _EMNIST_LABELS.index(x[0]))
 
 
 def get_chinese_samples():
@@ -65,27 +74,36 @@ def get_kmnist_samples():
 
 
 datasets = [
-    ("Western (MNIST)",  get_mnist_samples()),
-    ("Chinese",          get_chinese_samples()),
-    ("Japanese (KMNIST)", get_kmnist_samples()),
+    ("EMNIST balanced",   get_emnist_samples(),  "emnist"),
+    ("Chinese",           get_chinese_samples(), "chinese"),
+    ("Japanese (KMNIST)", get_kmnist_samples(),  "japanese"),
 ]
 
-for ds_name, samples in datasets:
-    n = len(samples)
-    fig, axes = plt.subplots(2, n, figsize=(n * 1.4, 3.2))
+for ds_name, samples, fname in datasets:
+    n    = len(samples)
+    cols = min(n, 16)                        # wrap at 16 columns
+    rows = (n + cols - 1) // cols            # number of class-row groups
+    fig, axes = plt.subplots(rows * 2, cols, figsize=(cols * 1.4, rows * 3.2))
+    if axes.ndim == 1:
+        axes = axes.reshape(-1, cols)
     fig.suptitle(ds_name, fontsize=11, y=1.01)
-    axes[0, 0].set_ylabel("original",     fontsize=8)
-    axes[1, 0].set_ylabel("preprocessed", fontsize=8)
 
-    for col, (label, orig) in enumerate(samples):
+    for i, (label, orig) in enumerate(samples):
+        r, c = divmod(i, cols)
         processed = normalize_to_canvas(orig, random_pad=False)
-        axes[0, col].imshow(orig,      cmap="gray"); axes[0, col].axis("off")
-        axes[1, col].imshow(processed, cmap="gray"); axes[1, col].axis("off")
-        axes[0, col].set_title(label, fontsize=9)
+        axes[r*2,   c].imshow(orig,      cmap="gray"); axes[r*2,   c].axis("off")
+        axes[r*2+1, c].imshow(processed, cmap="gray"); axes[r*2+1, c].axis("off")
+        if c == 0:
+            axes[r*2,   0].set_ylabel("original",     fontsize=8)
+            axes[r*2+1, 0].set_ylabel("preprocessed", fontsize=8)
+
+    # hide unused cells in last row
+    for j in range(n % cols if n % cols else cols, cols):
+        axes[(rows-1)*2,   j].axis("off")
+        axes[(rows-1)*2+1, j].axis("off")
 
     plt.tight_layout()
-    safe_name = ds_name.split()[0].lower()
-    out_path = os.path.join(OUT_DIR, f"grid_{safe_name}.png")
+    out_path = os.path.join(OUT_DIR, f"grid_{fname}.png")
     plt.savefig(out_path, dpi=130, bbox_inches="tight")
     plt.close()
     print(f"Saved {out_path}")

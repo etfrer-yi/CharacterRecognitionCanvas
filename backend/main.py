@@ -15,6 +15,8 @@ MODEL_PATH = "../models/combined.pth"
 INPUT_SIZE = 32
 LABELS = (
     [str(i) for i in range(10)] +
+    [chr(c) for c in range(ord('A'), ord('Z') + 1)] +
+    ['a', 'b', 'd', 'e', 'f', 'g', 'h', 'n', 'q', 'r', 't'] +
     ["零","一","二","三","四","五","六","七","八","九","十","百","千","万","亿"] +
     ["お","き","す","つ","な","は","ま","や","れ","を"]
 )
@@ -33,7 +35,7 @@ def startup():
     m.load_state_dict(ckpt["state_dict"])
     m.eval()
     model = m
-    print("Loaded combined model (35 classes)")
+    print("Loaded combined model (72 classes)")
 
 
 def preprocess(img: Image.Image) -> torch.Tensor:

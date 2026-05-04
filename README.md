@@ -1,20 +1,24 @@
 # Character Recognition Canvas
 
-A web app for recognising handwritten characters. Draw on a canvas and a CNN model identifies what you drew from 35 possible characters across three writing systems.
+A web app for recognising handwritten characters. Draw on a canvas and a CNN model identifies what you drew from 72 possible characters across four writing systems.
 
 ## Recognised characters
 
 | Category | Characters |
 |---|---|
-| Western digits | 0 1 2 3 4 5 6 7 8 9 |
+| Digits | 0 1 2 3 4 5 6 7 8 9 |
+| Uppercase letters | A B C D E F G H I J K L M N O P Q R S T U V W X Y Z |
+| Lowercase letters | a b d e f g h n q r t |
 | Chinese numerals | 零 一 二 三 四 五 六 七 八 九 十 百 千 万 亿 |
 | Kuzushiji hiragana | お き す つ な は ま や れ を |
 
+The 11 lowercase letters are those visually distinct enough from their uppercase counterparts to be classified separately (EMNIST balanced split).
+
 ## Architecture
 
-A single CNN is trained jointly on all three datasets and outputs a probability distribution over all 35 classes. There is no routing step — the model distinguishes between writing systems implicitly.
+A single CNN is trained jointly on all three datasets and outputs a probability distribution over all 72 classes. There is no routing step — the model distinguishes between writing systems implicitly.
 
-**Model** (`backend/model.py`): two conv+pool blocks → 256-unit FC → 35-class output. Input is 32×32 grayscale.
+**Model** (`backend/model.py`): small residual network — stem conv → three stride-2 ResBlock stages (32→64→128→256 channels) → global average pool → Dropout(0.4) → 256-unit FC → 72-class output. Input is 32×32 grayscale.
 
 ## The bounding box problem
 
@@ -46,19 +50,18 @@ Two approaches were considered:
 
 `normalize_to_canvas` (applied identically at train and inference time):
 1. Convert to grayscale; invert if background is white (normalise to white-on-black)
-2. Stretch contrast to full 0–255 range
-3. Binary threshold: pixel > 20 → 255, else 0
-4. Remove noise: drop connected components smaller than 1% of total foreground pixels
-5. Tight-crop to the stroke bounding box
-6. Pad to a square:
+2. **Non-clean path** (Chinese MNIST, `clean=False`): stretch contrast to full 0–255 range, threshold at pixel > 20 → 255, remove connected components smaller than 1% of total foreground pixels.  
+   **Clean path** (EMNIST, Kuzushiji, `clean=True`): images are already binary — threshold at pixel > 10 → 255 only, skip contrast-stretch and noise removal.
+3. Tight-crop to the stroke bounding box
+4. Pad to a square:
    - canonical / inference (`random_pad=False`): fixed 5% margin on all sides
    - augmentation (`random_pad=True`): independent uniform [0%, 40%] per side
-7. Resize to 32×32
+5. Resize to 32×32
 
-`TF_AUG` additionally applies `RandomAffine(degrees=15, translate=(0.1, 0.1), shear=8)` on top of the random-pad normalisation, so the model trains on characters at a wide range of sizes, positions, and orientations. This directly covers the range from a small careful drawing to a large stroke filling the whole canvas.
+`TF_AUG` / `TF_AUG_C` additionally apply `RandomAffine(degrees=15, translate=(0.1, 0.1), shear=8)` on top of the random-pad normalisation, so the model trains on characters at a wide range of sizes, positions, and orientations. This directly covers the range from a small careful drawing to a large stroke filling the whole canvas.
 
 **Training data** (`backend/train.py`):
-- MNIST (60k train / 10k val) — downloaded automatically via Kaggle ([hojjatk/mnist-dataset](https://www.kaggle.com/datasets/hojjatk/mnist-dataset))
+- EMNIST balanced (112,800 train / 18,800 val, 47 classes) — downloaded automatically via Kaggle ([crawford/emnist](https://www.kaggle.com/datasets/crawford/emnist))
 - Chinese MNIST (15k images, 90/10 split) — downloaded automatically via Kaggle ([gpreda/chinese-mnist](https://www.kaggle.com/datasets/gpreda/chinese-mnist))
 - Kuzushiji-MNIST (60k train / 10k val) — downloaded automatically via Kaggle ([anokas/kuzushiji](https://www.kaggle.com/datasets/anokas/kuzushiji))
 
@@ -66,7 +69,7 @@ Each split uses all originals (`TF_CLEAN`) plus 50% extra augmented copies (`TF_
 
 **Backend** (`backend/main.py`): FastAPI server with a single `POST /predict` endpoint.
 
-**Frontend** (`frontend/src/`): React + Vite. 280×280 canvas with thick white strokes on black background (matching training convention). Collapsible sidebar lists all 35 characters with descriptions.
+**Frontend** (`frontend/src/`): React + Vite. 280×280 canvas with thick white strokes on black background (matching training convention). Collapsible sidebar lists all 72 characters with descriptions.
 
 ## Extending to new datasets
 
@@ -85,7 +88,7 @@ The only assumption is that source images contain a single character per image.
 
 | File | Contents |
 |---|---|
-| `grid_western.png` | MNIST digits 0–9 |
+| `grid_emnist.png` | EMNIST balanced characters (digits, uppercase, lowercase) |
 | `grid_chinese.png` | Chinese numerals 零–亿 |
 | `grid_japanese.png` | Kuzushiji hiragana お き す つ な は ま や れ を |
 
@@ -109,9 +112,9 @@ CharacterRecognitionCanvas/
 │       ├── App.jsx       # Canvas + prediction UI
 │       └── Sidebar.jsx   # Character reference sidebar
 ├── models/
-│   └── combined.pth      # Trained model (35 classes)
+│   └── combined.pth      # Trained model (72 classes)
 ├── preprocessing_samples/
-│   ├── grid_western.png
+│   ├── grid_emnist.png
 │   ├── grid_chinese.png
 │   └── grid_japanese.png
 ├── visualize_preprocessing.py
@@ -152,7 +155,7 @@ All three datasets are downloaded automatically by `train.py` via [kagglehub](ht
 
 | Dataset | Kaggle slug |
 |---|---|
-| MNIST | [hojjatk/mnist-dataset](https://www.kaggle.com/datasets/hojjatk/mnist-dataset) |
+| EMNIST balanced | [crawford/emnist](https://www.kaggle.com/datasets/crawford/emnist) |
 | Chinese MNIST | [gpreda/chinese-mnist](https://www.kaggle.com/datasets/gpreda/chinese-mnist) |
 | Kuzushiji-MNIST | [anokas/kuzushiji](https://www.kaggle.com/datasets/anokas/kuzushiji) |
 
@@ -204,7 +207,7 @@ Open **http://localhost:5173**.
     { "label": "三", "prob": 0.9821 },
     { "label": "二", "prob": 0.0102 },
     { "label": "一", "prob": 0.0041 },
-    { "label": "三", "prob": 0.0021 },
+    { "label": "川", "prob": 0.0021 },
     { "label": "7",  "prob": 0.0015 }
   ]
 }
