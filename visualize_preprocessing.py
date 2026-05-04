@@ -12,9 +12,10 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from train import normalize_to_canvas, _read_idx
 
-MNIST_ROOT   = os.path.expanduser("~/.cache/kagglehub/datasets/hojjatk/mnist-dataset/versions/1")
-CHINESE_ROOT = os.path.expanduser("~/.cache/kagglehub/datasets/gpreda/chinese-mnist/versions/7/data/data")
-KMNIST_ROOT  = os.path.expanduser("~/.cache/kagglehub/datasets/anokas/kuzushiji/versions/3")
+_KAGGLE_CACHE = os.environ.get("KAGGLEHUB_CACHE") or os.path.expanduser("~/.cache/kagglehub")
+MNIST_ROOT   = os.path.join(_KAGGLE_CACHE, "datasets/hojjatk/mnist-dataset/versions/1")
+CHINESE_ROOT = os.path.join(_KAGGLE_CACHE, "datasets/gpreda/chinese-mnist/versions/7/data/data")
+KMNIST_ROOT  = os.path.join(_KAGGLE_CACHE, "datasets/anokas/kuzushiji/versions/3")
 
 CHINESE_LABELS = ["零","一","二","三","四","五","六","七","八","九","十","百","千","万","亿"]
 KMNIST_LABELS  = ["お","き","す","つ","な","は","ま","や","れ","を"]
