@@ -67,7 +67,7 @@ export default function App() {
       <Sidebar open={sidebarOpen} onToggle={() => setSidebarOpen((o) => !o)} />
       <div style={{ ...s.page, marginLeft: sidebarOpen ? 280 : 0, transition: "margin-left 0.3s" }}>
         <h1 style={s.title}>Character Recognition</h1>
-        <p style={s.hint}>Draw a digit, letter, Chinese numeral, or Japanese hiragana</p>
+        <p style={s.hint}>Draw a digit, letter, Chinese numeral, Japanese hiragana, or Korean Hangul syllable</p>
 
         <canvas
           ref={canvasRef} width={SIZE} height={SIZE} style={s.canvas}

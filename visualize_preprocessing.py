@@ -10,7 +10,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from PIL import Image
-from train import normalize_to_canvas, _EMNIST_LABELS, CHINESE_LABELS, KMNIST_LABELS
+from train import normalize_to_canvas, _EMNIST_LABELS, CHINESE_LABELS, KMNIST_LABELS, HANGUL_FOLDER_MAP
 
 _KAGGLE_CACHE = os.environ.get("KAGGLEHUB_CACHE") or os.path.expanduser("~/.cache/kagglehub/datasets")
 
@@ -25,6 +25,8 @@ def _latest(base, *parts):
 EMNIST_ROOT  = _latest(_KAGGLE_CACHE, "crawford/emnist")
 CHINESE_ROOT = os.path.join(_latest(_KAGGLE_CACHE, "gpreda/chinese-mnist"), "data", "data")
 KMNIST_ROOT  = _latest(_KAGGLE_CACHE, "anokas/kuzushiji")
+HANGUL_ROOT  = os.path.join(_latest(_KAGGLE_CACHE, "jkim289/handwritten-korean-characters"),
+                             "Hangul Database", "Hangul Database")
 
 OUT_DIR = os.path.join(os.path.dirname(__file__), "preprocessing_samples")
 os.makedirs(OUT_DIR, exist_ok=True)
@@ -73,10 +75,23 @@ def get_kmnist_samples():
     return sorted(samples, key=lambda x: KMNIST_LABELS.index(x[0]))
 
 
+def get_hangul_samples():
+    samples = []
+    for folder, char in HANGUL_FOLDER_MAP.items():
+        folder_path = os.path.join(HANGUL_ROOT, folder)
+        if not os.path.isdir(folder_path):
+            continue
+        files = sorted(os.listdir(folder_path))
+        if files:
+            samples.append((char, Image.open(os.path.join(folder_path, files[0]))))
+    return samples
+
+
 datasets = [
     ("EMNIST balanced",   get_emnist_samples(),  "emnist"),
     ("Chinese",           get_chinese_samples(), "chinese"),
     ("Japanese (KMNIST)", get_kmnist_samples(),  "japanese"),
+    ("Korean Hangul",     get_hangul_samples(),  "hangul"),
 ]
 
 for ds_name, samples, fname in datasets:

@@ -1,14 +1,15 @@
 """
-Train a single 72-class model:
-  0-46  : EMNIST balanced (digits 0-9, uppercase A-Z, lowercase a b d e f g h n q r t)
-  47-61 : Chinese numerals (零–亿)
-  62-71 : Kuzushiji-MNIST hiragana (お き す つ な は ま や れ を)
+Train a single 135-class model:
+  0-46   : EMNIST balanced (digits 0-9, uppercase A-Z, lowercase a b d e f g h n q r t)
+  47-61  : Chinese numerals (零–亿)
+  62-71  : Kuzushiji-MNIST hiragana (お き す つ な は ま や れ を)
+  72-134 : Handwritten Hangul Korean syllables (63 unique syllables)
 
 All datasets are downloaded automatically via kagglehub.
 Requires ~/.kaggle/kaggle.json (see README for setup).
 
 Usage:
-    python train.py [--epochs 8] [--batch_size 128]
+    python train.py [--epochs 8] [--batch_size 128] [--resume]
 """
 import os, ssl
 import numpy as np
@@ -24,7 +25,7 @@ DEVICE = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 
 MODELS_DIR = "../models"
 INPUT_SIZE = 32
-NUM_CLASSES = 72
+NUM_CLASSES = 135
 os.makedirs(MODELS_DIR, exist_ok=True)
 
 # EMNIST balanced: 0-9 digits, A-Z uppercase, then 11 visually-distinct lowercase
@@ -34,14 +35,30 @@ _EMNIST_LABELS = (
     ['a', 'b', 'd', 'e', 'f', 'g', 'h', 'n', 'q', 'r', 't']
 )
 
-LABELS = (
-    _EMNIST_LABELS +
-    ["零","一","二","三","四","五","六","七","八","九","十","百","千","万","亿"] +
-    ["お","き","す","つ","な","は","ま","や","れ","を"]
-)
-
 CHINESE_LABELS = ["零","一","二","三","四","五","六","七","八","九","十","百","千","万","亿"]
 KMNIST_LABELS  = ["お","き","す","つ","な","は","ま","や","れ","を"]
+
+# 63 unique Hangul syllables (folder 'ga' and 'gi' both map to '가'; deduplicated)
+# Ordered by romanized folder name (alphabetical), skipping the duplicate 'gi'
+HANGUL_FOLDER_MAP = {
+    'a':'아','bak':'박','bo':'보','bu':'부','choe':'최','da':'다','dae':'대',
+    'deul':'들','do':'도','dong':'동','e':'에','eo':'어','eu':'으','eui':'의',
+    'eul':'을','eun':'은','ga':'가','geos':'것','geu':'그','gim':'김','go':'고',
+    'gong':'공','gu':'구','guk':'국','gwa':'과','gye':'계','gyeong':'경','ha':'하',
+    'hae':'해','han':'한','hwa':'화','i':'이','il':'일','in':'인','iss':'있',
+    'ja':'자','jang':'장','je':'제','jeok':'적','jeon':'전','jeong':'정','ji':'지',
+    'jo':'조','ju':'주','na':'나','neun':'는','ra':'라','reul':'를','ri':'리',
+    'ro':'로','sa':'사','sang':'상','seo':'서','seong':'성','seu':'스','si':'시',
+    'so':'소','su':'수','wi':'위','won':'원','yeo':'여','yeon':'연','yong':'용',
+}  # 'gi' omitted — duplicate of 'ga' (both are '가')
+HANGUL_LABELS = list(HANGUL_FOLDER_MAP.values())  # 63 labels
+
+LABELS = (
+    _EMNIST_LABELS +
+    CHINESE_LABELS +
+    KMNIST_LABELS +
+    HANGUL_LABELS
+)
 
 _norm = transforms.Normalize((0.5,), (0.5,))
 
@@ -214,11 +231,41 @@ class KuzushijiMNIST(Dataset):
         return self.transform(img) if self.transform else img, self.labels[idx]
 
 
-def train(epochs: int = 8, batch_size: int = 128):
+class HangulDataset(Dataset):
+    """
+    Reads jkim289/handwritten-korean-characters.
+    db_subdir: 'Hangul Database' (100 samples/class, val) or
+               'Hangul Database Extended' (2000 samples/class, train).
+    Skips folder 'gi' (duplicate of 'ga', both are '가').
+    label_offset: first Hangul class index in the combined label space.
+    """
+    def __init__(self, root, db_subdir, label_offset, transform=None):
+        db_path = os.path.join(root, db_subdir, db_subdir)
+        self.transform = transform
+        self.samples = []
+        for idx, (folder, _) in enumerate(HANGUL_FOLDER_MAP.items()):
+            folder_path = os.path.join(db_path, folder)
+            if not os.path.isdir(folder_path):
+                continue
+            label = label_offset + idx
+            for fname in os.listdir(folder_path):
+                if fname.lower().endswith(('.jpg', '.png')):
+                    self.samples.append((os.path.join(folder_path, fname), label))
+
+    def __len__(self): return len(self.samples)
+
+    def __getitem__(self, idx):
+        path, label = self.samples[idx]
+        img = Image.open(path)
+        return self.transform(img) if self.transform else img, label
+
+
+def train(epochs: int = 8, batch_size: int = 128, resume: bool = False):
     print("Fetching datasets via kagglehub …")
     emnist_root  = kagglehub.dataset_download("crawford/emnist")
     chinese_root = kagglehub.dataset_download("gpreda/chinese-mnist")
     kmnist_root  = kagglehub.dataset_download("anokas/kuzushiji")
+    hangul_root  = kagglehub.dataset_download("jkim289/handwritten-korean-characters")
 
     # EMNIST balanced (47 classes, labels 0-46)
     emnist_tr_c = EMNIST(emnist_root, train=True,  transform=TF_CLEAN_C)
@@ -239,15 +286,24 @@ def train(epochs: int = 8, batch_size: int = 128):
     km_va_c = KuzushijiMNIST(kmnist_root, train=False, label_offset=62, transform=TF_CLEAN_C)
     km_va_a = KuzushijiMNIST(kmnist_root, train=False, label_offset=62, transform=TF_AUG_C)
 
+    # Hangul (63 classes, labels 72-134)
+    # Extended (2000/class) → train; original (100/class) → val
+    hg_tr_c = HangulDataset(hangul_root, "Hangul Database Extended", label_offset=72, transform=TF_CLEAN)
+    hg_tr_a = HangulDataset(hangul_root, "Hangul Database Extended", label_offset=72, transform=TF_AUG)
+    hg_va_c = HangulDataset(hangul_root, "Hangul Database",          label_offset=72, transform=TF_CLEAN)
+    hg_va_a = HangulDataset(hangul_root, "Hangul Database",          label_offset=72, transform=TF_AUG)
+
     train_ds = ConcatDataset([
         with_extra(emnist_tr_c, emnist_tr_a),
         with_extra(Subset(ch_c, tr_idx), Subset(ch_a, tr_idx)),
         with_extra(km_tr_c, km_tr_a),
+        with_extra(hg_tr_c, hg_tr_a),
     ])
     val_ds = ConcatDataset([
         with_extra(emnist_va_c, emnist_va_a),
         with_extra(Subset(ch_c, va_idx), Subset(ch_a, va_idx)),
         with_extra(km_va_c, km_va_a),
+        with_extra(hg_va_c, hg_va_a),
     ])
 
     print(f"Train size: {len(train_ds)}  Val size: {len(val_ds)}")
@@ -259,6 +315,19 @@ def train(epochs: int = 8, batch_size: int = 128):
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
     criterion = nn.CrossEntropyLoss()
+
+    out = f"{MODELS_DIR}/combined.pth"
+    best_acc = 0.0
+    if resume:
+        if not os.path.exists(out):
+            raise FileNotFoundError(f"--resume specified but {out} does not exist.")
+        ckpt = torch.load(out, map_location=DEVICE, weights_only=True)
+        if ckpt.get("num_classes") == NUM_CLASSES:
+            model.load_state_dict(ckpt["state_dict"])
+            best_acc = ckpt.get("val_acc", 0.0)
+            print(f"Resumed from {out}  (best val_acc={best_acc:.4f})")
+        else:
+            print(f"Existing model has {ckpt.get('num_classes')} classes; starting fresh.")
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -279,11 +348,17 @@ def train(epochs: int = 8, batch_size: int = 128):
                 x, y = x.to(DEVICE), y.to(DEVICE)
                 correct += (model(x).argmax(1) == y).sum().item()
                 total   += y.size(0)
-        print(f"Epoch {epoch}/{epochs}  loss={total_loss/len(train_loader):.4f}  val_acc={correct/total:.4f}")
+        val_acc = correct / total
+        print(f"Epoch {epoch}/{epochs}  loss={total_loss/len(train_loader):.4f}  val_acc={val_acc:.4f}")
 
-    out = f"{MODELS_DIR}/combined.pth"
-    torch.save({"state_dict": model.state_dict(), "num_classes": NUM_CLASSES, "input_size": INPUT_SIZE}, out)
-    print(f"Saved → {out}")
+        if val_acc > best_acc:
+            best_acc = val_acc
+            torch.save({"state_dict": model.state_dict(), "num_classes": NUM_CLASSES,
+                        "input_size": INPUT_SIZE, "val_acc": best_acc}, out)
+            print(f"  ✓ Saved (best val_acc={best_acc:.4f})")
+        else:
+            print(f"  ✗ Val acc did not improve ({best_acc:.4f}). Stopping.")
+            break
 
 
 if __name__ == "__main__":
@@ -291,5 +366,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--epochs",     type=int, default=8)
     p.add_argument("--batch_size", type=int, default=128)
+    p.add_argument("--resume",     action="store_true",
+                   help="Resume training from an existing combined.pth (file must exist).")
     args = p.parse_args()
-    train(args.epochs, args.batch_size)
+    train(args.epochs, args.batch_size, args.resume)
