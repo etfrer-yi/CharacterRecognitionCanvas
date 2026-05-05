@@ -2,7 +2,7 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import Sidebar from "./Sidebar";
 
 const API = "http://localhost:8000";
-const SIZE = 280;
+const SIZE = 560;
 
 export default function App() {
   const canvasRef = useRef(null);
@@ -32,7 +32,7 @@ export default function App() {
     if (!drawing) return;
     const ctx = canvasRef.current.getContext("2d");
     const pos = getPos(e);
-    ctx.strokeStyle = "#fff"; ctx.lineWidth = 20; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 40; ctx.lineCap = "round"; ctx.lineJoin = "round";
     ctx.beginPath(); ctx.moveTo(lastPos.current.x, lastPos.current.y); ctx.lineTo(pos.x, pos.y); ctx.stroke();
     lastPos.current = pos;
   }, [drawing]);
