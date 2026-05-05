@@ -169,8 +169,8 @@ All three datasets are downloaded automatically by `train.py` via [kagglehub](ht
 ```bash
 cd backend
 source venv/bin/activate
-python train.py           # default: 8 epochs, batch size 128
-python train.py --epochs 20 --batch_size 64
+python train.py           # default: 8 epochs, batch size 128, without loading a previously trained model
+python train.py --epochs 20 --batch_size 64 --resume
 ```
 
 A pre-trained `models/combined.pth` is included.
